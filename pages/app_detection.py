@@ -937,7 +937,7 @@ fig.update_yaxes(rangemode="tozero", fixedrange=True)
 fig.update_layout(
     template="plotly_dark",
     height=286,
-    margin=dict(l=28, r=28, t=4, b=54),
+    margin=dict(l=28, r=28, t=4, b=34),
     hovermode="closest",
     hoverlabel=dict(
         bgcolor="rgba(255,255,255,0.68)",
@@ -972,8 +972,7 @@ if legend_parts:
 if not has_curve_stream:
     st.warning(f"⚠️ 核心提示：系统已录入【{primary_code}】的定值规范坐标轴架，但当前总线尚未接收到外部模拟曲线数据。")
 
-# 先保留主图位置；异常检测完成后再把关键点标注写入图中并统一渲染。
-chart_placeholder = st.empty()
+st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False, 'scrollZoom': False, 'doubleClick': False})
 
 # 轻量游标：隐藏文字，仅保留可拖动小三角；清单读取该截面值。
 if not df_ts.empty:
@@ -995,63 +994,6 @@ if not df_ts.empty:
 global_has_anomaly, global_is_severe = False, False
 all_fault_descs = []
 p_max, p_min = 0.0, 0.0
-
-# 工况曲线关键点：仅异常情况下记录极值点，正常曲线不添加任何标注。
-curve_key_points = {}
-_key_point_priority = {
-    'low_extreme': 1,
-    'high_extreme': 1,
-}
-
-
-def _register_curve_key_point(code, point_time, point_value, title, kind, ax=0, ay=-42):
-    """登记异常极值点；同一波峰/波谷附近只保留一个最极端的点。"""
-    try:
-        ts = pd.to_datetime(point_time)
-        value = float(point_value)
-    except Exception:
-        return
-    if pd.isna(ts) or not np.isfinite(value):
-        return
-
-    code = str(code)
-    merge_window = pd.Timedelta(minutes=120)
-
-    # 同一测点、同一方向且时间相近的候选点，视为同一个波峰或波谷。
-    # 高侧只保留数值最大的点，低侧只保留数值最小的点，避免多个圆点挤在一起。
-    for current in curve_key_points.values():
-        if current.get('code') != code or current.get('kind') != kind:
-            continue
-        if abs(ts - current.get('time')) > merge_window:
-            continue
-
-        if str(title) not in current['titles']:
-            current['titles'].append(str(title))
-
-        is_more_extreme = (
-            (kind == 'high_extreme' and value > current.get('value', value))
-            or (kind == 'low_extreme' and value < current.get('value', value))
-        )
-        if is_more_extreme:
-            current.update({
-                'time': ts,
-                'value': value,
-                'ax': ax,
-                'ay': ay,
-            })
-        return
-
-    key = (code, int(ts.value), round(value, 8))
-    curve_key_points[key] = {
-        'code': code,
-        'time': ts,
-        'value': value,
-        'titles': [str(title)],
-        'kind': kind,
-        'priority': _key_point_priority.get(kind, 0),
-        'ax': ax,
-        'ay': ay,
-    }
 
 
 def get_limit(val):
@@ -1130,13 +1072,13 @@ def _near_margin(series, threshold_value, span=None):
 @st.cache_data(show_spinner=False, max_entries=512)
 def _detect_jump_events(series, time_series, span):
     """
-    混合型突变检测：覆盖瞬时尖峰/下探、短时快速变化、持续爬坡和平台跃迁。
+    混合型突变检测：同时覆盖瞬时尖峰/下探、短时快速变化、持续爬坡和平台跃迁。
 
-    与上一版相比，本版重点修正事件起止时间：
-    1. 触发阈值仍用于确认“这是一次突变”，但事件开始时间会向前回溯到
-       曲线首次持续脱离原稳态的位置，而不是把首次达到 7% 阈值的时间当作开始时间；
-    2. 回归稳定或进入新稳态时，记录稳定区间的第一个采样点，避免结束时间额外延迟；
-    3. 主体候选计算保持 NumPy 向量化，仅对少量候选事件做局部回溯，保证切换测点速度。
+    核心原则：
+    1. 快速突变使用前 1 小时均值作为稳态基准，并检查相邻采样点的相对斜率；
+    2. 爬坡变化使用前 6 小时中位数作为长期稳态基准，避免爬坡过程污染基准；
+    3. 变化幅度全部相对于稳态值计算，因此 30→40 与 0.3→0.4 灵敏度一致；
+    4. 仅对候选事件做前后区间扫描，主体计算保持 NumPy 向量化，避免切换测点时卡顿。
     """
     raw_values = pd.to_numeric(series, errors='coerce')
     raw_times = pd.to_datetime(time_series, errors='coerce')
@@ -1160,7 +1102,7 @@ def _detect_jump_events(series, time_series, span):
     except Exception:
         engineering_span = 0.0
 
-    # 轻度中值平滑用于识别爬坡；瞬时尖峰仍使用原始值判断。
+    # 轻度中值平滑用于识别爬坡；快速尖峰仍使用原始值判断。
     smooth_points = max(3, int(round(20.0 / sample_minutes)))
     if smooth_points % 2 == 0:
         smooth_points += 1
@@ -1181,7 +1123,8 @@ def _detect_jump_events(series, time_series, span):
     fast_baseline = fast_roll.mean().to_numpy(dtype=float)
     fast_count = fast_roll.count().to_numpy(dtype=float)
 
-    # 爬坡基准：当前点之前 6 小时中位数，避免爬坡过程污染基准。
+    # 爬坡基准：当前点之前 6 小时中位数。
+    # 相比前 1 小时均值，它不会在持续爬坡过程中迅速被抬高或压低。
     slow_roll = indexed_smooth.rolling('6h', closed='left')
     slow_baseline = slow_roll.median().to_numpy(dtype=float)
     slow_count = slow_roll.count().to_numpy(dtype=float)
@@ -1191,6 +1134,7 @@ def _detect_jump_events(series, time_series, span):
     fast_valid_base = (fast_count >= min_fast_points) & np.isfinite(fast_baseline)
     slow_valid_base = (slow_count >= min_slow_points) & np.isfinite(slow_baseline)
 
+    # 长期基准不足时回退到前 1 小时基准。
     baseline = np.where(slow_valid_base, slow_baseline, fast_baseline)
     baseline_valid = np.where(slow_valid_base, True, fast_valid_base) & np.isfinite(baseline)
 
@@ -1209,7 +1153,7 @@ def _detect_jump_events(series, time_series, span):
     ref_scale = np.maximum(ref_scale, 1e-6)
     absolute_gate = np.maximum(noise * 6.0, ref_scale * 0.015)
 
-    # A. 瞬时/快速突变：相邻点相对变化 + 单位时间相对斜率。
+    # ---------- A. 瞬时/快速突变：原始相邻点的相对变化和相对斜率 ----------
     step_delta = np.diff(values, prepend=np.nan)
     safe_dt = np.where(np.isfinite(dt_minutes) & (dt_minutes > 0), dt_minutes, np.nan)
     fast_ref = np.abs(fast_baseline)
@@ -1234,15 +1178,22 @@ def _detect_jump_events(series, time_series, span):
         & (np.abs(step_delta) >= np.maximum(noise * 6.0, fast_ref * 0.012))
     )
 
-    # B. 爬坡/平台突变：相对于长期稳态基准的累计偏离。
+    # ---------- B. 爬坡/平台突变：相对长期稳态基准的累计偏离 ----------
     deviation = smooth_values - baseline
     rel_deviation = np.abs(deviation) / ref_scale
 
+    # 多时间尺度检查实际累计变化与平均斜率。
+    # 阈值刻意低于旧版 15%，以覆盖 45→52、72→83 这类约 15% 的平滑爬坡，
+    # 同时用长期稳态基准和噪声门槛抑制普通微小波动。
     max_window_rel_change = np.zeros(len(values), dtype=float)
     max_window_rel_slope = np.zeros(len(values), dtype=float)
     all_indices = np.arange(len(values))
     for horizon_minutes in (30.0, 60.0, 120.0, 180.0, 360.0):
-        start_indices = np.searchsorted(time_minutes, time_minutes - horizon_minutes, side='left')
+        start_indices = np.searchsorted(
+            time_minutes,
+            time_minutes - horizon_minutes,
+            side='left'
+        )
         elapsed = time_minutes - time_minutes[start_indices]
         delta = smooth_values - smooth_values[start_indices]
         rel_change = np.abs(delta) / ref_scale
@@ -1278,12 +1229,11 @@ def _detect_jump_events(series, time_series, span):
     if not candidate_mask.any():
         return []
 
+    # 每段连续候选只从第一个触发点启动事件提取，避免对同一平台重复扫描。
     candidate_starts = np.flatnonzero(candidate_mask & ~np.r_[False, candidate_mask[:-1]])
     events = []
     covered_until = -1
     stable_points_required = max(2, int(np.ceil(30.0 / sample_minutes)))
-    plateau_points_required = max(stable_points_required, int(np.ceil(60.0 / sample_minutes)))
-    onset_confirm_points = max(2, int(np.ceil(20.0 / sample_minutes)))
     max_event_minutes = 12.0 * 60.0
 
     for trigger_idx in candidate_starts:
@@ -1308,47 +1258,17 @@ def _detect_jump_events(series, time_series, span):
             scale = fallback_scale
         scale = max(scale, 1e-6)
 
-        # 回溯真正的突变起点：阈值触发点只负责确认异常，开始时间取曲线首次
-        # 持续脱离稳态的点。0.4% 的低门槛用于找起点，不用于确认是否报警。
+        onset_band = max(scale * 0.025, noise * 5.0, 1e-6)
         search_begin = int(np.searchsorted(time_minutes, time_minutes[trigger_idx] - 360.0, side='left'))
         prior_segment = smooth_values[search_begin:trigger_idx + 1]
-        directional_dev = direction * (prior_segment - base_value)
-        directional_steps = direction * np.diff(prior_segment, prepend=prior_segment[0])
-        onset_deviation_gate = max(scale * 0.004, noise * 2.5, 1e-6)
-        onset_step_gate = max(scale * 0.0008, noise * 1.2, 1e-6)
-        small_reverse_tolerance = max(scale * 0.0004, noise * 0.8, 1e-6)
-
-        start_local = None
-        for local_idx in range(1, len(prior_segment)):
-            confirm_end = min(len(prior_segment), local_idx + onset_confirm_points)
-            if confirm_end <= local_idx:
-                continue
-            confirm_steps = directional_steps[local_idx:confirm_end]
-            net_move = direction * (
-                prior_segment[confirm_end - 1] - prior_segment[max(0, local_idx - 1)]
-            )
-            forward_fraction = float(np.mean(confirm_steps >= -small_reverse_tolerance)) if len(confirm_steps) else 0.0
-            onset_signal = (
-                directional_dev[local_idx] >= onset_deviation_gate
-                or directional_steps[local_idx] >= onset_step_gate
-            )
-            if (
-                onset_signal
-                and net_move >= onset_deviation_gate * 0.8
-                and forward_fraction >= 0.65
-            ):
-                start_local = local_idx
-                break
-
-        if start_local is not None:
-            start_idx = search_begin + int(start_local)
+        stable_positions = np.flatnonzero(np.abs(prior_segment - base_value) <= onset_band)
+        if len(stable_positions):
+            start_idx = search_begin + int(stable_positions[-1])
         else:
-            # 极短尖峰可能没有可持续回溯段，起点取发生明显跳变的当前点。
-            start_idx = trigger_idx
+            start_idx = max(search_begin, trigger_idx - 1)
+        start_idx = min(start_idx, max(trigger_idx - 1, 0))
 
-        start_idx = max(search_begin, min(start_idx, trigger_idx))
-
-        # 用起点之前 1 小时重新计算稳态值，报告基准不受突变过程污染。
+        # 用事件起点之前 1 小时重新计算稳态值，确保报告中的基准不被爬坡污染。
         prior_mask = (
             (time_minutes < time_minutes[start_idx])
             & (time_minutes >= time_minutes[start_idx] - 60.0)
@@ -1360,22 +1280,18 @@ def _detect_jump_events(series, time_series, span):
                 scale = fallback_scale
             scale = max(scale, 1e-6)
 
-        # 回归原稳态采用更窄的 1.8% 带宽，避免曲线仍明显偏离稳态时就提前结束事件。
-        recovery_band = max(scale * 0.018, noise * 6.0, 1e-6)
-        # 新平台必须连续稳定约 1 小时，防止把峰值后的缓慢回落误判成新稳态。
-        plateau_range_gate = max(scale * 0.012, noise * 7.0, 1e-6)
+        recovery_band = max(scale * 0.045, noise * 6.0, 1e-6)
+        plateau_range_gate = max(scale * 0.025, noise * 7.0, 1e-6)
         plateau_deviation_gate = max(scale * 0.065, noise * 7.0, 1e-6)
 
         extreme_idx = trigger_idx
         event_end_idx = trigger_idx
-        end_reason = 'data_end'
         recovery_count = 0
         plateau_count = 0
 
         for k in range(trigger_idx + 1, len(values)):
             if time_minutes[k] - time_minutes[start_idx] > max_event_minutes:
                 event_end_idx = k
-                end_reason = 'timeout'
                 break
 
             if direction > 0 and values[k] >= values[extreme_idx]:
@@ -1385,14 +1301,16 @@ def _detect_jump_events(series, time_series, span):
 
             event_end_idx = k
 
+            # 返回原稳态。
             if k > extreme_idx and abs(values[k] - base_value) <= recovery_band:
                 recovery_count += 1
             else:
                 recovery_count = 0
 
-            recent_start = max(start_idx, k - plateau_points_required + 1)
+            # 未返回原稳态，但已形成新的稳定平台，也认为本段变化过程结束。
+            recent_start = max(start_idx, k - stable_points_required + 1)
             recent_values = values[recent_start:k + 1]
-            if len(recent_values) >= plateau_points_required:
+            if len(recent_values) >= stable_points_required:
                 recent_range = float(np.nanmax(recent_values) - np.nanmin(recent_values))
                 recent_mean = float(np.nanmean(recent_values))
                 if (
@@ -1404,15 +1322,7 @@ def _detect_jump_events(series, time_series, span):
                 else:
                     plateau_count = 0
 
-            if recovery_count >= 2:
-                # 记录回归稳定区间的第一个点，而不是第二个确认点。
-                event_end_idx = max(extreme_idx, k - recovery_count + 1)
-                end_reason = 'recovered'
-                break
-            if plateau_count >= 2:
-                # 记录新稳态区间的起点，避免结束时间额外延迟。
-                event_end_idx = max(extreme_idx, k - plateau_points_required + 1)
-                end_reason = 'new_plateau'
+            if recovery_count >= 2 or plateau_count >= 2:
                 break
 
         segment = values[start_idx:event_end_idx + 1]
@@ -1432,10 +1342,8 @@ def _detect_jump_events(series, time_series, span):
         minutes_to_extreme = max(time_minutes[extreme_idx] - time_minutes[start_idx], sample_minutes)
         average_relative_slope = relative_change / minutes_to_extreme
 
-        # 瞬时尖峰的事件起点就是异常采样点，但斜率仍需与前一个稳态采样点比较。
-        slope_calc_start = max(0, start_idx - 1)
-        local_steps = np.diff(values[slope_calc_start:extreme_idx + 1])
-        local_dt = np.diff(time_minutes[slope_calc_start:extreme_idx + 1])
+        local_steps = np.diff(values[start_idx:extreme_idx + 1])
+        local_dt = np.diff(time_minutes[start_idx:extreme_idx + 1])
         if len(local_steps):
             local_step_rel_change = np.abs(local_steps) / scale
             local_step_slope = np.divide(
@@ -1462,6 +1370,7 @@ def _detect_jump_events(series, time_series, span):
             and total_change >= absolute_event_gate
             and minutes_to_extreme <= 360.0 + sample_minutes * 2
         )
+        # 对幅度更明显但持续更长的变化保留兜底，避免缓慢爬坡因平均斜率略低而漏检。
         broad_ramp_valid = (
             relative_change >= 0.10
             and total_change >= absolute_event_gate
@@ -1481,16 +1390,11 @@ def _detect_jump_events(series, time_series, span):
             'start_time': times.iloc[start_idx].strftime('%Y-%m-%d %H:%M'),
             'end_time': times.iloc[event_end_idx].strftime('%Y-%m-%d %H:%M'),
             'extreme_time': times.iloc[extreme_idx].strftime('%Y-%m-%d %H:%M'),
-            'start_timestamp': times.iloc[start_idx],
-            'end_timestamp': times.iloc[event_end_idx],
-            'extreme_timestamp': times.iloc[extreme_idx],
             'dir': '+' if signed_change > 0 else '-',
             'event_type': event_type,
-            'end_reason': end_reason,
             'total_change': total_change,
             'signed_change': signed_change,
             'start_value': base_value,
-            'start_point_value': float(values[start_idx]),
             'baseline_value': base_value,
             'end_value': float(values[extreme_idx]),
             'extreme_value': float(values[extreme_idx]),
@@ -1504,20 +1408,21 @@ def _detect_jump_events(series, time_series, span):
             'threshold': 0.00012 if event_type == '爬坡突变' else 0.003,
         })
 
+        # 屏蔽当前连续候选区间，避免同一次平台变化被重复报告。
         covered_until = event_end_idx
         while covered_until + 1 < len(values) and candidate_mask[covered_until + 1]:
             covered_until += 1
 
     return events
-
-
 def _format_jump_event(je, unit):
-    """格式化突变区间；只保留稳态基准、极值及极值时间等关键内容。"""
+    """格式化完整突变区间，区分瞬时突变与爬坡突变。"""
     event_type = je.get('event_type', '瞬时突变')
     if event_type == '爬坡突变':
         direction_word = '持续爬坡上升' if je.get('dir') == '+' else '持续爬坡下降'
+        slope_label = '平均相对斜率'
     else:
         direction_word = '快速上升' if je.get('dir') == '+' else '快速下降'
+        slope_label = '最大相对斜率'
 
     signed = '+' if je.get('dir') == '+' else '-'
     start_t = je.get('start_time') or je.get('time')
@@ -1526,12 +1431,18 @@ def _format_jump_event(je, unit):
     total = float(je.get('total_change', je.get('amp', 0.0)))
     baseline_value = je.get('baseline_value', je.get('start_value'))
     extreme_value = je.get('extreme_value', je.get('end_value'))
+    recovery_value = je.get('recovery_value')
+    relative_slope = je.get('relative_slope_per_min')
 
     detail_parts = []
     if baseline_value is not None and extreme_value is not None:
         detail_parts.append(f"前1小时稳态均值{float(baseline_value):.2f}{unit}→极值{float(extreme_value):.2f}{unit}")
     if extreme_t:
         detail_parts.append(f"极值时刻{extreme_t}")
+    if relative_slope is not None:
+        detail_parts.append(f"{slope_label}{float(relative_slope):.2f}%/min")
+    if recovery_value is not None:
+        detail_parts.append(f"区间结束值{float(recovery_value):.2f}{unit}")
 
     details = f"（{'；'.join(detail_parts)}）" if detail_parts else ""
     if start_t and end_t and start_t != end_t:
@@ -1630,206 +1541,9 @@ if has_curve_stream:
                 jump_texts = [_format_jump_event(je, unit) for je in jump_events[:2]]
                 faults.append(f"参数突变：{'；'.join(jump_texts)}")
 
-            # 工况曲线只标注异常极值：高侧/上升异常标红色最高值，低侧/下降异常标蓝色最低值。
-            numeric_series = pd.to_numeric(series, errors='coerce')
-            valid_series = numeric_series.dropna()
-            if not valid_series.empty:
-                max_idx = valid_series.idxmax()
-                min_idx = valid_series.idxmin()
-                max_time = df_ts.loc[max_idx, 'Time']
-                min_time = df_ts.loc[min_idx, 'Time']
-                max_value = float(valid_series.loc[max_idx])
-                min_value = float(valid_series.loc[min_idx])
-
-                if is_h or (not alarm_triggers and is_app_h):
-                    _register_curve_key_point(
-                        code, max_time, max_value, '最高值', 'high_extreme'
-                    )
-                if is_l or (not alarm_triggers and is_app_l):
-                    _register_curve_key_point(
-                        code, min_time, min_value, '最低值', 'low_extreme'
-                    )
-
-            # 参数突变只标注真正偏离正常稳态的波峰/波谷。
-            # 反向回到正常值属于“恢复过程”，不再把恢复后的正常值误标成新的极值点。
-            if not valid_series.empty:
-                nominal_value = float(valid_series.median())
-                nominal_band = max(
-                    _noise_sigma(valid_series) * 6.0,
-                    abs(nominal_value) * 0.01,
-                    _robust_data_scale(valid_series) * 0.02,
-                    1e-6,
-                )
-
-                for je in jump_events[:2]:
-                    extreme_ts = je.get('extreme_timestamp', je.get('extreme_time'))
-                    extreme_value = je.get('extreme_value')
-                    baseline_value = je.get('baseline_value', je.get('start_value'))
-                    try:
-                        extreme_value = float(extreme_value)
-                        baseline_value = float(baseline_value)
-                    except Exception:
-                        continue
-
-                    # 只有极值比事件起点更远离全局正常稳态时才标注。
-                    # 这样会保留真实突变顶峰/低谷，并过滤“低谷后回升到正常值”之类的恢复点。
-                    extreme_deviation = abs(extreme_value - nominal_value)
-                    baseline_deviation = abs(baseline_value - nominal_value)
-                    if extreme_deviation <= baseline_deviation + nominal_band:
-                        continue
-
-                    if je.get('dir') == '+' and extreme_value > nominal_value + nominal_band:
-                        _register_curve_key_point(
-                            code, extreme_ts, extreme_value, '最高值', 'high_extreme'
-                        )
-                    elif je.get('dir') == '-' and extreme_value < nominal_value - nominal_band:
-                        _register_curve_key_point(
-                            code, extreme_ts, extreme_value, '最低值', 'low_extreme'
-                        )
-
             all_fault_descs.append(f"【{c_name}】({code})：" + "；".join(faults))
 
 fault_desc_str = " \n\n".join(all_fault_descs)
-
-# 把异常极值点写入主图。正常情况下 curve_key_points 为空，不显示任何标注。
-# 只显示红色最高值圆点或蓝色最低值圆点，并在点旁显示数值；不画垂线、不标时间。
-def _deduplicate_curve_extremes(points):
-    """
-    按“同一次异常波峰/波谷”进行最终去重，而不是只按固定时间窗去重。
-
-    判定原则：
-    - 两个同方向候选点之间，如果曲线没有回到正常稳态附近，则属于同一个波峰/波谷；
-    - 同一个波峰只保留一个最高点，同一个波谷只保留一个最低点；
-    - 平顶/平底存在多个相同极值采样点时，取这些极值点的中间时刻，只画一个圆点；
-    - 两次异常之间若已经回归稳态，则保留为两个独立极值点。
-    """
-    raw_points = list(points)
-    if len(raw_points) <= 1:
-        return raw_points
-
-    grouped = {}
-    for point in raw_points:
-        grouped.setdefault((str(point.get('code')), point.get('kind')), []).append(point)
-
-    final_points = []
-    for (code, kind), group in grouped.items():
-        group = sorted(group, key=lambda p: pd.to_datetime(p.get('time')))
-        actual_col = resolve_actual_col(df_ts, selected_system, code)
-        if actual_col is None or actual_col not in df_ts.columns:
-            # 无法读取曲线时，至少按较宽时间窗做一次保底合并。
-            clusters = []
-            for point in group:
-                if not clusters or pd.to_datetime(point['time']) - pd.to_datetime(clusters[-1][-1]['time']) > pd.Timedelta(hours=6):
-                    clusters.append([point])
-                else:
-                    clusters[-1].append(point)
-        else:
-            numeric_series = pd.to_numeric(df_ts[actual_col], errors='coerce')
-            valid_series = numeric_series.dropna()
-            if valid_series.empty:
-                final_points.extend(group)
-                continue
-
-            nominal_value = float(valid_series.median())
-            steady_band = max(
-                _noise_sigma(valid_series) * 8.0,
-                abs(nominal_value) * 0.015,
-                _robust_data_scale(valid_series) * 0.035,
-                1e-6,
-            )
-
-            clusters = [[group[0]]]
-            for point in group[1:]:
-                previous = clusters[-1][-1]
-                t1 = pd.to_datetime(previous['time'])
-                t2 = pd.to_datetime(point['time'])
-                left_t, right_t = min(t1, t2), max(t1, t2)
-                between_mask = (df_ts['Time'] >= left_t) & (df_ts['Time'] <= right_t)
-                between = numeric_series.loc[between_mask].dropna()
-
-                if between.empty:
-                    returned_to_steady = (right_t - left_t) > pd.Timedelta(hours=6)
-                elif kind == 'high_extreme':
-                    # 高侧两个候选点之间降回稳态附近，才视为两个独立波峰。
-                    returned_to_steady = float(between.min()) <= nominal_value + steady_band
-                else:
-                    # 低侧两个候选点之间升回稳态附近，才视为两个独立波谷。
-                    returned_to_steady = float(between.max()) >= nominal_value - steady_band
-
-                if returned_to_steady:
-                    clusters.append([point])
-                else:
-                    clusters[-1].append(point)
-
-        for cluster in clusters:
-            if len(cluster) == 1:
-                final_points.append(cluster[0])
-                continue
-
-            cluster_start = min(pd.to_datetime(p['time']) for p in cluster)
-            cluster_end = max(pd.to_datetime(p['time']) for p in cluster)
-
-            if actual_col is not None and actual_col in df_ts.columns:
-                numeric_series = pd.to_numeric(df_ts[actual_col], errors='coerce')
-                region_mask = (df_ts['Time'] >= cluster_start) & (df_ts['Time'] <= cluster_end)
-                region = numeric_series.loc[region_mask].dropna()
-            else:
-                region = pd.Series(dtype=float)
-
-            if not region.empty:
-                extreme_value = float(region.max() if kind == 'high_extreme' else region.min())
-                tolerance = max(abs(extreme_value) * 1e-7, 1e-9)
-                equal_extreme_idx = region.index[np.isclose(region.to_numpy(dtype=float), extreme_value, rtol=0.0, atol=tolerance)]
-                chosen_idx = equal_extreme_idx[len(equal_extreme_idx) // 2]
-                chosen_time = pd.to_datetime(df_ts.loc[chosen_idx, 'Time'])
-            else:
-                if kind == 'high_extreme':
-                    extreme_value = max(float(p['value']) for p in cluster)
-                else:
-                    extreme_value = min(float(p['value']) for p in cluster)
-                same_extreme = [p for p in cluster if np.isclose(float(p['value']), extreme_value, rtol=0.0, atol=max(abs(extreme_value) * 1e-7, 1e-9))]
-                same_extreme = sorted(same_extreme, key=lambda p: pd.to_datetime(p['time']))
-                chosen_time = pd.to_datetime(same_extreme[len(same_extreme) // 2]['time'])
-
-            representative = dict(cluster[0])
-            representative['time'] = chosen_time
-            representative['value'] = extreme_value
-            final_points.append(representative)
-
-    return sorted(final_points, key=lambda p: pd.to_datetime(p.get('time')))
-
-
-_key_point_styles = {
-    'high_extreme': dict(color='#e53935', symbol='circle', size=10, textposition='top center'),
-    'low_extreme': dict(color='#1e88e5', symbol='circle', size=10, textposition='bottom center'),
-}
-
-_deduplicated_curve_points = _deduplicate_curve_extremes(curve_key_points.values())
-for point in _deduplicated_curve_points[:30]:
-    style = _key_point_styles.get(point['kind'], _key_point_styles['high_extreme'])
-    fig.add_trace(go.Scatter(
-        x=[point['time']],
-        y=[point['value']],
-        mode='markers+text',
-        marker=dict(
-            color=style['color'],
-            symbol=style['symbol'],
-            size=style['size'],
-            line=dict(color='white', width=1)
-        ),
-        text=[f"{point['value']:.2f}{unit}"],
-        textposition=style['textposition'],
-        textfont=dict(size=10, color=style['color']),
-        hoverinfo='skip',
-        showlegend=False,
-        cliponaxis=False,
-    ))
-
-chart_placeholder.plotly_chart(
-    fig,
-    use_container_width=True,
-    config={'displayModeBar': False, 'scrollZoom': False, 'doubleClick': False}
-)
 
 st.markdown("<h3 class='ai-section-title'>🧠 AI 监测预警中心</h3>", unsafe_allow_html=True)
 
