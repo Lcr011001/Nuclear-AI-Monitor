@@ -151,61 +151,67 @@ section[data-testid="stMain"] div[data-testid="stPlotlyChart"],
 }
 
 /* =========================
-   主图游标：仅作用于主内容区，不再误伤左侧时间窗滑块
+   主图游标：使用带 key 的专属容器精确定位，避免云端 DOM 差异导致原生红色轨道重新出现
    ========================= */
-section[data-testid="stMain"] div[data-testid="stSlider"],
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] {
+.st-key-cursor_slider_box {
     min-height: 1.15rem !important;
     height: 1.15rem !important;
     margin-top: -1.22rem !important;
     margin-bottom: 0.18rem !important;
-    padding-left: 28px !important;
-    padding-right: 28px !important;
     position: relative !important;
-    z-index: 5 !important;
+    z-index: 20 !important;
+    overflow: visible !important;
+}
+.st-key-cursor_slider_box div[data-testid="stSlider"] {
+    min-height: 1.15rem !important;
+    height: 1.15rem !important;
+    margin: 0 !important;
+    padding: 0 28px !important;
+    position: relative !important;
     overflow: visible !important;
     box-sizing: border-box !important;
 }
-section[data-testid="stMain"] div[data-testid="stSlider"] p,
-section[data-testid="stMain"] div[data-testid="stSlider"] [data-testid="stThumbValue"],
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] p,
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] [data-testid="stThumbValue"] {
+.st-key-cursor_slider_box div[data-testid="stSlider"] p,
+.st-key-cursor_slider_box div[data-testid="stSlider"] [data-testid="stThumbValue"] {
     display: none !important;
 }
-section[data-testid="stMain"] div[data-testid="stSlider"] [data-baseweb="slider"],
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] [data-baseweb="slider"] {
-    height: 1px !important;
-    min-height: 1px !important;
-    padding: 0 !important;
+.st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"] {
+    min-height: 0 !important;
+    height: 0 !important;
     margin: 0 !important;
+    padding: 0 !important;
+    background: transparent !important;
     overflow: visible !important;
 }
-section[data-testid="stMain"] div[data-testid="stSlider"] [data-baseweb="slider"] div:not([role="slider"]),
-section[data-testid="stMain"] div[data-testid="stSlider"] [data-baseweb="slider"] span,
-section[data-testid="stMain"] div[data-testid="stSlider"] [data-baseweb="slider"] input,
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] [data-baseweb="slider"] div:not([role="slider"]),
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] [data-baseweb="slider"] span,
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] [data-baseweb="slider"] input {
+/* 隐藏云端默认主题生成的轨道、进度条、刻度和输入层。 */
+.st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"] *:not([role="slider"]) {
     background: transparent !important;
+    background-color: transparent !important;
     border-color: transparent !important;
     box-shadow: none !important;
     color: transparent !important;
 }
-section[data-testid="stMain"] div[data-testid="stSlider"] [role="slider"],
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] [role="slider"] {
+.st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"] input {
+    opacity: 0 !important;
+}
+/* 只保留可拖动的蓝绿色小三角。 */
+.st-key-cursor_slider_box div[data-testid="stSlider"] [role="slider"] {
     width: 0 !important;
+    min-width: 0 !important;
     height: 0 !important;
+    min-height: 0 !important;
     border-left: 7px solid transparent !important;
     border-right: 7px solid transparent !important;
+    border-top: 0 !important;
     border-bottom: 13px solid #00bcd4 !important;
     border-radius: 0 !important;
     background: transparent !important;
     box-shadow: none !important;
     margin-top: -7px !important;
     cursor: grab !important;
+    opacity: 1 !important;
 }
-section[data-testid="stMain"] div[data-testid="stSlider"] [role="slider"]:active,
-[data-testid="stAppViewContainer"] main div[data-testid="stSlider"] [role="slider"]:active {
+.st-key-cursor_slider_box div[data-testid="stSlider"] [role="slider"]:active {
     cursor: grabbing !important;
 }
 
@@ -977,17 +983,18 @@ chart_placeholder = st.empty()
 
 # 轻量游标：隐藏文字，仅保留可拖动小三角；清单读取该截面值。
 if not df_ts.empty:
-    st.slider(
-        "游标截面时刻",
-        min_value=cursor_min,
-        max_value=cursor_max,
-        value=st.session_state[cursor_key],
-        step=timedelta(minutes=10),
-        format="MM/DD HH:mm",
-        key=cursor_key,
-        label_visibility="collapsed",
-        help="拖动时间轴附近的小三角，清单『📍游标时刻值』会读取对应截面。"
-    )
+    with st.container(key="cursor_slider_box"):
+        st.slider(
+            "游标截面时刻",
+            min_value=cursor_min,
+            max_value=cursor_max,
+            value=st.session_state[cursor_key],
+            step=timedelta(minutes=10),
+            format="MM/DD HH:mm",
+            key=cursor_key,
+            label_visibility="collapsed",
+            help="拖动时间轴附近的小三角，清单『📍游标时刻值』会读取对应截面。"
+        )
 
 # ==========================================
 # 4. 全景多维预警及大模型综合分析推理模块
