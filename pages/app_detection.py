@@ -46,10 +46,14 @@ st.markdown("""
 section[data-testid="stSidebar"] > div:first-child,
 [data-testid="stSidebarContent"] {
     padding-top: 0rem !important;
-    padding-bottom: 1rem !important;
+    padding-bottom: 0.55rem !important;
+}
+/* 只压缩侧边栏最外层纵向间距，展开后的表单内部仍保留正常可读间距。 */
+section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(.sidebar-main-title) {
+    gap: 0.42rem !important;
 }
 .sidebar-main-title {
-    margin: -0.42rem 0 0.72rem 0 !important;
+    margin: -0.42rem 0 0.42rem 0 !important;
     padding: 0 !important;
     font-size: 1.62rem !important;
     line-height: 1.25 !important;
@@ -58,14 +62,21 @@ section[data-testid="stSidebar"] > div:first-child,
     white-space: nowrap !important;
 }
 section[data-testid="stSidebar"] [data-testid="stExpander"] {
-    margin-top: 0.2rem !important;
-    margin-bottom: 0.25rem !important;
+    margin-top: 0 !important;
+    margin-bottom: 0.08rem !important;
+}
+section[data-testid="stSidebar"] [data-testid="stExpander"] details > summary {
+    min-height: 2.45rem !important;
+    padding-top: 0.32rem !important;
+    padding-bottom: 0.32rem !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stSelectbox"] {
-    margin-bottom: 0.35rem !important;
+    margin-top: 0 !important;
+    margin-bottom: 0.10rem !important;
 }
-.sidebar-time-gap {
-    height: 0.35rem;
+/* 云端多页面模式下不再显示占空间的侧栏横线。 */
+section[data-testid="stSidebar"] hr {
+    display: none !important;
 }
 
 /* 系统切换标题与刷新按钮 */
@@ -86,12 +97,12 @@ section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:has(.sys-s
     padding: 0 !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:has(.sys-switch-label) div[data-testid="stButton"] > button {
-    min-width: 2rem !important;
-    width: 2rem !important;
-    max-width: 2rem !important;
-    min-height: 2rem !important;
-    height: 2rem !important;
-    max-height: 2rem !important;
+    min-width: 1.72rem !important;
+    width: 1.72rem !important;
+    max-width: 1.72rem !important;
+    min-height: 1.72rem !important;
+    height: 1.72rem !important;
+    max-height: 1.72rem !important;
     padding: 0 !important;
     border-radius: 0.5rem !important;
     line-height: 1 !important;
@@ -151,65 +162,117 @@ section[data-testid="stMain"] div[data-testid="stPlotlyChart"],
 }
 
 /* =========================
-   主图游标：使用带 key 的专属容器精确定位，避免云端 DOM 差异导致原生红色轨道重新出现
+   主图游标：云端稳健版
+   1. 同时兼容带 key 容器和 Streamlit Cloud 的 main DOM；
+   2. 用背景遮罩彻底覆盖原生红色轨道；
+   3. 只保留可拖动的蓝绿色小三角，不影响侧边栏时间窗滑块。
    ========================= */
 .st-key-cursor_slider_box {
-    min-height: 1.15rem !important;
-    height: 1.15rem !important;
-    margin-top: -1.22rem !important;
-    margin-bottom: 0.18rem !important;
+    min-height: 1.05rem !important;
+    height: 1.05rem !important;
+    margin-top: -1.18rem !important;
+    margin-bottom: 0.12rem !important;
     position: relative !important;
     z-index: 20 !important;
     overflow: visible !important;
+    isolation: isolate !important;
 }
-.st-key-cursor_slider_box div[data-testid="stSlider"] {
-    min-height: 1.15rem !important;
-    height: 1.15rem !important;
+/* 覆盖云端主题重新绘制出来的红色轨道和圆点底座。 */
+.st-key-cursor_slider_box::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -0.28rem;
+    height: 1.45rem;
+    background: var(--background-color, #ffffff);
+    z-index: 40;
+    pointer-events: none;
+}
+
+.st-key-cursor_slider_box div[data-testid="stSlider"],
+[data-testid="stAppViewContainer"] main .st-key-cursor_slider_box div[data-testid="stSlider"],
+section[data-testid="stMain"] .st-key-cursor_slider_box div[data-testid="stSlider"] {
+    min-height: 1.05rem !important;
+    height: 1.05rem !important;
     margin: 0 !important;
     padding: 0 28px !important;
     position: relative !important;
+    z-index: 50 !important;
     overflow: visible !important;
     box-sizing: border-box !important;
 }
+
 .st-key-cursor_slider_box div[data-testid="stSlider"] p,
 .st-key-cursor_slider_box div[data-testid="stSlider"] [data-testid="stThumbValue"] {
     display: none !important;
 }
+
 .st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"] {
     min-height: 0 !important;
     height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
-    background: transparent !important;
+    position: relative !important;
+    z-index: 60 !important;
     overflow: visible !important;
+    background: transparent !important;
+    background-image: none !important;
+    border: 0 !important;
+    box-shadow: none !important;
 }
-/* 隐藏云端默认主题生成的轨道、进度条、刻度和输入层。 */
-.st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"] *:not([role="slider"]) {
+
+/* 所有包含 thumb 的祖先保留布局，但清空背景；其余轨道/进度条节点直接隐藏。 */
+.st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"] * {
     background: transparent !important;
     background-color: transparent !important;
+    background-image: none !important;
     border-color: transparent !important;
     box-shadow: none !important;
-    color: transparent !important;
+    outline: none !important;
+}
+.st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"] *:not([role="slider"]):not(:has([role="slider"])) {
+    visibility: hidden !important;
+    opacity: 0 !important;
 }
 .st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"] input {
     opacity: 0 !important;
 }
-/* 只保留可拖动的蓝绿色小三角。 */
-.st-key-cursor_slider_box div[data-testid="stSlider"] [role="slider"] {
+.st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"]::before,
+.st-key-cursor_slider_box div[data-testid="stSlider"] [data-baseweb="slider"]::after,
+.st-key-cursor_slider_box div[data-testid="stSlider"] [role="slider"]::before,
+.st-key-cursor_slider_box div[data-testid="stSlider"] [role="slider"]::after {
+    content: none !important;
+    display: none !important;
+}
+
+/* 蓝绿色可拖动小三角。 */
+.st-key-cursor_slider_box div[data-testid="stSlider"] [role="slider"],
+[data-testid="stAppViewContainer"] main .st-key-cursor_slider_box [role="slider"],
+section[data-testid="stMain"] .st-key-cursor_slider_box [role="slider"] {
+    visibility: visible !important;
+    opacity: 1 !important;
+    display: block !important;
+    position: relative !important;
+    z-index: 100 !important;
     width: 0 !important;
     min-width: 0 !important;
+    max-width: 0 !important;
     height: 0 !important;
     min-height: 0 !important;
+    max-height: 0 !important;
+    padding: 0 !important;
     border-left: 7px solid transparent !important;
     border-right: 7px solid transparent !important;
     border-top: 0 !important;
     border-bottom: 13px solid #00bcd4 !important;
     border-radius: 0 !important;
     background: transparent !important;
+    background-image: none !important;
     box-shadow: none !important;
+    outline: none !important;
     margin-top: -7px !important;
     cursor: grab !important;
-    opacity: 1 !important;
 }
 .st-key-cursor_slider_box div[data-testid="stSlider"] [role="slider"]:active {
     cursor: grabbing !important;
@@ -743,7 +806,6 @@ with st.sidebar.expander("📥 智能导入外部定值手册", expanded=False):
 # ==========================================
 # 2. 系统调度与高联动双向时间窗
 # ==========================================
-st.sidebar.markdown("---")
 system_options = base_system_df['系统'].dropna().unique().tolist()
 # 刷新按钮必须保持当前系统，不允许刷新后跳回列表第一个系统。
 if st.session_state.get("refresh_target_system") in system_options:
@@ -769,7 +831,6 @@ selected_system = st.sidebar.selectbox(
     key="selected_monitor_system",
     label_visibility="collapsed"
 )
-st.sidebar.markdown('<div class="sidebar-time-gap"></div>', unsafe_allow_html=True)
 active_system_df = base_system_df[base_system_df['系统'] == selected_system].reset_index(drop=True)
 
 try:
