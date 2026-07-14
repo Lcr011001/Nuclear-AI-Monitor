@@ -7,8 +7,28 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# 使用显式导航替代 pages/ 自动生成的“Home / 应用检测 / 应用模拟”。
-# 导航放到页面顶部，释放左侧工具栏的纵向空间。
+# 将系统导航固定在左侧栏。页面滚动时导航不会覆盖主标题或曲线图。
+st.markdown(
+    """
+    <style>
+    section[data-testid="stSidebarNav"] {
+        padding-top: 0.25rem !important;
+        padding-bottom: 0.20rem !important;
+        margin-bottom: 0.15rem !important;
+    }
+    section[data-testid="stSidebarNav"] ul {
+        gap: 0.10rem !important;
+    }
+    section[data-testid="stSidebarNav"] a {
+        min-height: 2.15rem !important;
+        padding-top: 0.30rem !important;
+        padding-bottom: 0.30rem !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 detection_page = st.Page(
     "pages/app_detection.py",
     title="智能监测",
@@ -24,7 +44,7 @@ simulation_page = st.Page(
 
 current_page = st.navigation(
     [detection_page, simulation_page],
-    position="top",
+    position="sidebar",
 )
 
 current_page.run()
