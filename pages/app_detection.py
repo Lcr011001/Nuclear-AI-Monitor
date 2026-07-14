@@ -46,14 +46,10 @@ st.markdown("""
 section[data-testid="stSidebar"] > div:first-child,
 [data-testid="stSidebarContent"] {
     padding-top: 0rem !important;
-    padding-bottom: 0.55rem !important;
-}
-/* 只压缩侧边栏最外层纵向间距，展开后的表单内部仍保留正常可读间距。 */
-section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(.sidebar-main-title) {
-    gap: 0.42rem !important;
+    padding-bottom: 1rem !important;
 }
 .sidebar-main-title {
-    margin: -0.42rem 0 0.42rem 0 !important;
+    margin: -0.42rem 0 0.72rem 0 !important;
     padding: 0 !important;
     font-size: 1.62rem !important;
     line-height: 1.25 !important;
@@ -62,25 +58,14 @@ section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"]:has(.sidebar
     white-space: nowrap !important;
 }
 section[data-testid="stSidebar"] [data-testid="stExpander"] {
-    margin-top: 0 !important;
-    margin-bottom: 0.08rem !important;
-}
-section[data-testid="stSidebar"] [data-testid="stExpander"] details > summary {
-    min-height: 2.45rem !important;
-    padding-top: 0.32rem !important;
-    padding-bottom: 0.32rem !important;
+    margin-top: 0.2rem !important;
+    margin-bottom: 0.25rem !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stSelectbox"] {
-    margin-top: 0 !important;
-    margin-bottom: 0.10rem !important;
+    margin-bottom: 0.35rem !important;
 }
-.sidebar-switch-gap {
-    height: 0.34rem !important;
-    min-height: 0.34rem !important;
-}
-/* 云端多页面模式下不再显示占空间的侧栏横线。 */
-section[data-testid="stSidebar"] hr {
-    display: none !important;
+.sidebar-time-gap {
+    height: 0.35rem;
 }
 
 /* 系统切换标题与刷新按钮 */
@@ -101,12 +86,12 @@ section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:has(.sys-s
     padding: 0 !important;
 }
 section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]:has(.sys-switch-label) div[data-testid="stButton"] > button {
-    min-width: 1.72rem !important;
-    width: 1.72rem !important;
-    max-width: 1.72rem !important;
-    min-height: 1.72rem !important;
-    height: 1.72rem !important;
-    max-height: 1.72rem !important;
+    min-width: 2rem !important;
+    width: 2rem !important;
+    max-width: 2rem !important;
+    min-height: 2rem !important;
+    height: 2rem !important;
+    max-height: 2rem !important;
     padding: 0 !important;
     border-radius: 0.5rem !important;
     line-height: 1 !important;
@@ -165,7 +150,7 @@ section[data-testid="stMain"] div[data-testid="stPlotlyChart"],
     overflow: visible !important;
 }
 
-/* AI 区域位于工况曲线之后 */
+/* AI 区域始终位于工况曲线之后 */
 .ai-section-title {
     margin: 0.12rem 0 0.40rem 0 !important;
     padding: 0 !important;
@@ -693,8 +678,7 @@ with st.sidebar.expander("📥 智能导入外部定值手册", expanded=False):
 # ==========================================
 # 2. 系统调度与高联动双向时间窗
 # ==========================================
-# 导入功能区与系统切换区之间仅保留少量呼吸空间，不再使用横线或大段留白。
-st.sidebar.markdown('<div class="sidebar-switch-gap"></div>', unsafe_allow_html=True)
+st.sidebar.markdown("---")
 system_options = base_system_df['系统'].dropna().unique().tolist()
 # 刷新按钮必须保持当前系统，不允许刷新后跳回列表第一个系统。
 if st.session_state.get("refresh_target_system") in system_options:
@@ -720,6 +704,7 @@ selected_system = st.sidebar.selectbox(
     key="selected_monitor_system",
     label_visibility="collapsed"
 )
+st.sidebar.markdown('<div class="sidebar-time-gap"></div>', unsafe_allow_html=True)
 active_system_df = base_system_df[base_system_df['系统'] == selected_system].reset_index(drop=True)
 
 try:
@@ -1053,6 +1038,7 @@ def _near_margin(series, threshold_value, span=None):
     return max(ref * 0.03, _noise_sigma(series) * 5, 1e-6)
 
 
+@st.cache_data(show_spinner=False, max_entries=512)
 def _detect_jump_events(series, time_series, span):
     """
     混合型突变检测：覆盖瞬时尖峰/下探、短时快速变化、持续爬坡和平台跃迁。
@@ -1433,153 +1419,7 @@ def _detect_jump_events(series, time_series, span):
         while covered_until + 1 < len(values) and candidate_mask[covered_until + 1]:
             covered_until += 1
 
-
-    if events:
-        return events
-
-    # 云端兜底通道：主检测通道没有形成事件时，直接比较当前值与前 1 小时稳态均值。
-    # 同时覆盖瞬时跳变、矩形脉冲、三角形爬坡和持续平台跃迁。
-    fallback_events = []
-    fb_baseline = fast_baseline.copy()
-    fb_valid = (fast_count >= min_fast_points) & np.isfinite(fb_baseline)
-    fb_scale = np.maximum(np.abs(fb_baseline), fallback_scale)
-    fb_scale = np.maximum(fb_scale, 1e-6)
-    fb_deviation = values - fb_baseline
-    fb_abs_deviation = np.abs(fb_deviation)
-    fb_rel_deviation = fb_abs_deviation / fb_scale
-
-    fb_step = np.diff(values, prepend=np.nan)
-    fb_step_rel = np.abs(fb_step) / fb_scale
-    fb_abs_gate = np.maximum(noise * 6.0, fb_scale * 0.015)
-    fb_trigger = fb_valid & (
-        ((fb_rel_deviation >= 0.06) & (fb_abs_deviation >= fb_abs_gate))
-        | ((fb_step_rel >= 0.05) & (np.abs(fb_step) >= fb_abs_gate))
-    )
-    trigger_indices = np.flatnonzero(fb_trigger)
-    if len(trigger_indices) == 0:
-        return []
-
-    max_gap_steps = max(2, int(np.ceil(60.0 / sample_minutes)))
-    clusters = []
-    current_cluster = [int(trigger_indices[0])]
-    for idx in trigger_indices[1:]:
-        idx = int(idx)
-        if idx - current_cluster[-1] <= max_gap_steps:
-            current_cluster.append(idx)
-        else:
-            clusters.append(current_cluster)
-            current_cluster = [idx]
-    clusters.append(current_cluster)
-
-    fallback_covered_until = -1
-    recovery_points_required = max(2, int(np.ceil(20.0 / sample_minutes)))
-    max_back_steps = max(3, int(np.ceil(360.0 / sample_minutes)))
-    max_forward_steps = max(6, int(np.ceil(720.0 / sample_minutes)))
-
-    for cluster in clusters:
-        first_idx = int(cluster[0])
-        if first_idx <= fallback_covered_until:
-            continue
-
-        cluster_arr = np.asarray(cluster, dtype=int)
-        strongest_idx = int(cluster_arr[np.nanargmax(fb_rel_deviation[cluster_arr])])
-        direction = 1 if fb_deviation[strongest_idx] > 0 else -1
-        base_value = float(fb_baseline[first_idx])
-        scale = max(abs(base_value), fallback_scale, noise * 10.0, 1e-6)
-
-        # 回溯首次脱离稳态的位置，避免突变开始时间滞后。
-        onset_gate = max(noise * 4.0, scale * 0.012)
-        search_left = max(0, first_idx - max_back_steps)
-        start_idx = first_idx
-        for j in range(first_idx - 1, search_left - 1, -1):
-            if abs(values[j] - base_value) <= onset_gate:
-                start_idx = j + 1
-                break
-            start_idx = j
-
-        search_right = min(len(values) - 1, int(cluster[-1]) + max_forward_steps)
-        if direction > 0:
-            extreme_idx = start_idx + int(np.nanargmax(values[start_idx:search_right + 1]))
-        else:
-            extreme_idx = start_idx + int(np.nanargmin(values[start_idx:search_right + 1]))
-
-        recovery_gate = max(noise * 5.0, scale * 0.02)
-        recovery_count = 0
-        event_end_idx = max(extreme_idx, int(cluster[-1]))
-        end_reason = 'window_end'
-        for k in range(extreme_idx + 1, search_right + 1):
-            if abs(values[k] - base_value) <= recovery_gate:
-                recovery_count += 1
-            else:
-                recovery_count = 0
-            if recovery_count >= recovery_points_required:
-                event_end_idx = k - recovery_points_required + 1
-                end_reason = 'recovered'
-                break
-
-        signed_change = float(values[extreme_idx] - base_value)
-        if signed_change == 0 or (signed_change > 0) != (direction > 0):
-            continue
-        total_change = abs(signed_change)
-        relative_change = total_change / scale
-
-        slope_start_idx = max(0, start_idx - 1)
-        local_values = values[slope_start_idx:extreme_idx + 1]
-        local_times = time_minutes[slope_start_idx:extreme_idx + 1]
-        if len(local_values) >= 2:
-            local_delta = np.diff(local_values)
-            local_dt = np.diff(local_times)
-            local_rel_slope = np.divide(
-                np.abs(local_delta) / scale,
-                local_dt,
-                out=np.zeros_like(local_delta, dtype=float),
-                where=local_dt > 0,
-            )
-            peak_relative_slope = float(np.nanmax(local_rel_slope)) if len(local_rel_slope) else 0.0
-            peak_step_change = float(np.nanmax(np.abs(local_delta) / scale)) if len(local_delta) else 0.0
-        else:
-            peak_relative_slope = 0.0
-            peak_step_change = 0.0
-
-        minutes_to_extreme = max(float(time_minutes[extreme_idx] - time_minutes[start_idx]), sample_minutes)
-        average_relative_slope = relative_change / minutes_to_extreme
-        absolute_event_gate = max(noise * 6.0, scale * 0.015, 1e-6)
-        fast_valid = peak_step_change >= 0.05 and total_change >= absolute_event_gate
-        ramp_valid = relative_change >= 0.06 and total_change >= absolute_event_gate and minutes_to_extreme <= 720.0
-        if not (fast_valid or ramp_valid):
-            continue
-
-        event_type = '瞬时突变' if fast_valid and minutes_to_extreme <= max(30.0, sample_minutes * 3) else '爬坡突变'
-        display_slope = peak_relative_slope if event_type == '瞬时突变' else average_relative_slope
-        fallback_events.append({
-            'start_time': times.iloc[start_idx].strftime('%Y-%m-%d %H:%M'),
-            'end_time': times.iloc[event_end_idx].strftime('%Y-%m-%d %H:%M'),
-            'extreme_time': times.iloc[extreme_idx].strftime('%Y-%m-%d %H:%M'),
-            'start_timestamp': times.iloc[start_idx],
-            'end_timestamp': times.iloc[event_end_idx],
-            'extreme_timestamp': times.iloc[extreme_idx],
-            'dir': '+' if signed_change > 0 else '-',
-            'event_type': event_type,
-            'end_reason': end_reason,
-            'total_change': total_change,
-            'signed_change': signed_change,
-            'start_value': base_value,
-            'start_point_value': float(values[start_idx]),
-            'baseline_value': base_value,
-            'end_value': float(values[extreme_idx]),
-            'extreme_value': float(values[extreme_idx]),
-            'recovery_value': float(values[event_end_idx]),
-            'relative_change_pct': relative_change * 100.0,
-            'relative_slope_per_min': display_slope * 100.0,
-            'average_relative_slope_per_min': average_relative_slope * 100.0,
-            'peak_relative_slope_per_min': peak_relative_slope * 100.0,
-            'duration_minutes': max(float(time_minutes[event_end_idx] - time_minutes[start_idx]), 0.0),
-            'duration_steps': max(1, event_end_idx - start_idx),
-            'threshold': 0.00012 if event_type == '爬坡突变' else 0.003,
-        })
-        fallback_covered_until = event_end_idx
-
-    return fallback_events
+    return events
 
 
 def _format_jump_event(je, unit):
@@ -2093,7 +1933,7 @@ for _, row in active_system_df.iterrows():
 
 table_data.insert(2, '检测结果', status_list)
 table_data.insert(3, '🕒实时检测值', realtime_vals)
-table_data.insert(4, '报警限值 (合并)', alarm_aggregates)
+table_data.insert(5, '报警限值 (合并)', alarm_aggregates)
 
 selection = st.dataframe(
     table_data,
