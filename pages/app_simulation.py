@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 import os
 import re
 import hashlib
+import shutil
+from pathlib import Path
 
 st.set_page_config(page_title="核电参数仿真输入系统", page_icon="🎛️", layout="wide")
 
@@ -45,8 +47,10 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] {
 </style>
 """, unsafe_allow_html=True)
 
-CONFIG_FILE = "active_points_config.csv"
-DATA_FILE = "live_data.csv"
+ROOT_DIR = Path(__file__).resolve().parents[1]
+CONFIG_FILE = ROOT_DIR / "active_points_config.csv"
+DATA_FILE = ROOT_DIR / "live_data.csv"
+DEFAULT_DATA_FILE = ROOT_DIR / "default_live_data.csv"
 
 # ==========================================
 # 实时演示时间轴配置
@@ -1237,8 +1241,8 @@ for _, r in base_system_df.iterrows():
 
     df_ts_full[actual_col] = df_ts_full[base_col] + filter_arr
 
-# 绝对只写入 df_ts_full 中真实存在的列，杜绝错乱
-df_ts_full.to_csv(DATA_FILE, index=False)
+# 页面加载和控件重跑只生成当前仿真预览，不自动覆盖检测端数据总线。
+# 只有下方“应用当前工况”按钮会显式写入 live_data.csv。
 
 # ==========================================
 # 5. 【微噪稳定版】系统工况推演控制台
@@ -1440,6 +1444,37 @@ with c1:
 
             st.success(f"🎉 演算完成！当前对【{sys_to_manage}】生成 {len(sys_codes)} 条测点曲线，其中 {len(all_victims)} 个测点触发越限高报/越限低报/临近高报/临近低报/参数突变场景，其他测点保持正常稳定工况。")
             st.rerun()
+
+with c3:
+    apply_col, restore_col = st.columns(2)
+    with apply_col:
+        if st.button(
+            "✅ 应用当前工况",
+            type="primary",
+            use_container_width=True,
+            key="apply_simulation_to_detection",
+            help="将当前页面生成的完整工况曲线写入检测端数据总线。",
+        ):
+            # 原子替换，避免检测页恰好读取到写入一半的 CSV。
+            temp_file = DATA_FILE.with_suffix(".tmp.csv")
+            df_ts_full.to_csv(temp_file, index=False)
+            temp_file.replace(DATA_FILE)
+            st.cache_data.clear()
+            st.success("当前工况已推送至智能监测系统。")
+
+    with restore_col:
+        if st.button(
+            "↩️ 恢复内置默认曲线",
+            use_container_width=True,
+            key="restore_builtin_default_data",
+            help="将 default_live_data.csv 恢复为当前检测端数据。",
+        ):
+            if not DEFAULT_DATA_FILE.exists():
+                st.error(f"未找到默认数据文件：{DEFAULT_DATA_FILE.name}")
+            else:
+                shutil.copy2(DEFAULT_DATA_FILE, DATA_FILE)
+                st.cache_data.clear()
+                st.success("已恢复 RHR、RCV 内置默认曲线。")
 
 st.markdown("---")
 
