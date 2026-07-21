@@ -6,9 +6,8 @@ from datetime import datetime, timedelta
 import os
 import re
 import hashlib
-import shutil
-from pathlib import Path
-
+import sys
+import os
 st.set_page_config(page_title="核电参数仿真输入系统", page_icon="🎛️", layout="wide")
 
 # 页面顶部与侧边栏标题对齐：右上角工具栏保留悬浮，左侧标题上移到与主标题同一视觉高度。
@@ -47,10 +46,22 @@ section[data-testid="stSidebar"] [data-testid="stExpander"] {
 </style>
 """, unsafe_allow_html=True)
 
-ROOT_DIR = Path(__file__).resolve().parents[1]
-CONFIG_FILE = ROOT_DIR / "active_points_config.csv"
-DATA_FILE = ROOT_DIR / "live_data.csv"
-DEFAULT_DATA_FILE = ROOT_DIR / "default_live_data.csv"
+
+
+def get_resource_path(relative_path):
+    """
+    获取资源的绝对路径。
+    无论是直接运行 Python 脚本，还是被 PyInstaller 打包成 .exe 运行，都能动态找到文件。
+    """
+    if hasattr(sys, '_MEIPASS'):
+        # 如果是被 PyInstaller 打包后的 .exe 运行，文件会被解压到 sys._MEIPASS 临时目录
+        return os.path.join(sys._MEIPASS, relative_path)
+    # 如果是开发环境下直接运行，返回当前工作目录下的相对路径
+    return os.path.join(os.path.abspath("."), relative_path)
+
+# 使用兼容函数获取真实的文件路径
+CONFIG_FILE = get_resource_path("active_points_config.csv")
+DATA_FILE = get_resource_path("live_data.csv")
 
 # ==========================================
 # 实时演示时间轴配置
@@ -1241,8 +1252,8 @@ for _, r in base_system_df.iterrows():
 
     df_ts_full[actual_col] = df_ts_full[base_col] + filter_arr
 
-# 页面加载和控件重跑只生成当前仿真预览，不自动覆盖检测端数据总线。
-# 只有下方“应用当前工况”按钮会显式写入 live_data.csv。
+# 绝对只写入 df_ts_full 中真实存在的列，杜绝错乱
+df_ts_full.to_csv(DATA_FILE, index=False)
 
 # ==========================================
 # 5. 【微噪稳定版】系统工况推演控制台
@@ -1444,37 +1455,6 @@ with c1:
 
             st.success(f"🎉 演算完成！当前对【{sys_to_manage}】生成 {len(sys_codes)} 条测点曲线，其中 {len(all_victims)} 个测点触发越限高报/越限低报/临近高报/临近低报/参数突变场景，其他测点保持正常稳定工况。")
             st.rerun()
-
-with c3:
-    apply_col, restore_col = st.columns(2)
-    with apply_col:
-        if st.button(
-            "✅ 应用当前工况",
-            type="primary",
-            use_container_width=True,
-            key="apply_simulation_to_detection",
-            help="将当前页面生成的完整工况曲线写入检测端数据总线。",
-        ):
-            # 原子替换，避免检测页恰好读取到写入一半的 CSV。
-            temp_file = DATA_FILE.with_suffix(".tmp.csv")
-            df_ts_full.to_csv(temp_file, index=False)
-            temp_file.replace(DATA_FILE)
-            st.cache_data.clear()
-            st.success("当前工况已推送至智能监测系统。")
-
-    with restore_col:
-        if st.button(
-            "↩️ 恢复内置默认曲线",
-            use_container_width=True,
-            key="restore_builtin_default_data",
-            help="将 default_live_data.csv 恢复为当前检测端数据。",
-        ):
-            if not DEFAULT_DATA_FILE.exists():
-                st.error(f"未找到默认数据文件：{DEFAULT_DATA_FILE.name}")
-            else:
-                shutil.copy2(DEFAULT_DATA_FILE, DATA_FILE)
-                st.cache_data.clear()
-                st.success("已恢复 RHR、RCV 内置默认曲线。")
 
 st.markdown("---")
 
